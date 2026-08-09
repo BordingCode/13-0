@@ -1,0 +1,167 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>13-0 — a Counter-Strike drafting roguelite</title>
+<meta name="description" content="Draft an all-time Counter-Strike roster from real rosters at real events, then try to win a Major without dropping a map.">
+<meta name="theme-color" content="#0d1117">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="13-0">
+<link rel="manifest" href="manifest.json">
+<link rel="apple-touch-icon" href="img/icon-180.png">
+<link rel="icon" href="img/icon-180.png">
+<link rel="stylesheet" href="css/main.css?v=5">
+</head>
+<body>
+
+<div id="boot" class="boot">Loading rosters…</div>
+
+<!-- ============ SETUP ============ -->
+<section id="screen-setup" class="screen">
+  <header class="hero">
+    <h1 class="logo">13<span>-0</span></h1>
+    <p class="tagline">Draft an all-time roster. Win a Major without dropping a map.</p>
+  </header>
+
+  <div class="panel">
+    <h2>Era</h2>
+    <div class="opts" id="opt-era"></div>
+  </div>
+
+  <div class="panel">
+    <h2>Difficulty</h2>
+    <div class="opts" id="opt-diff"></div>
+  </div>
+
+  <div class="panel">
+    <h2>Weapon allocation</h2>
+    <div class="opts" id="opt-alloc"></div>
+  </div>
+
+  <button id="btn-start" class="primary">Start Run</button>
+
+  <p class="fineprint">
+    Every player, roster and result here is real. Player ratings come from HLTV career
+    stats; roles and roster dates from Liquipedia; team strength from an Elo built on
+    68,932 matches played between 2012 and 2022.
+    <button class="linkish" id="btn-about">How the numbers work</button>
+  </p>
+</section>
+
+<!-- ============ DRAFT ============ -->
+<section id="screen-draft" class="screen">
+  <div class="topbar">
+    <div class="ovr-block">
+      <div class="ovr" id="team-ovr">—</div>
+      <div class="ovr-label">Team OVR</div>
+    </div>
+    <div class="breakdown" id="breakdown"></div>
+    <button class="ghost" id="btn-reroll">↻ Reroll <span id="reroll-count"></span></button>
+  </div>
+
+  <div class="roster" id="roster"></div>
+  <div class="roster" id="weapon-strip"></div>
+
+  <div class="pack">
+    <div class="pack-head">
+      <span id="pack-title">—</span>
+      <span class="pack-progress" id="pack-progress"></span>
+    </div>
+    <h3 class="section-label">Players</h3>
+    <div class="cards" id="pack-players"></div>
+    <h3 class="section-label">Weapons</h3>
+    <div class="cards weapons" id="pack-weapons"></div>
+  </div>
+
+  <p class="hint" id="draft-hint"></p>
+</section>
+
+<!-- ============ FIELD ============ -->
+<section id="screen-field" class="screen">
+  <h2 class="screen-title" id="field-title">The Field</h2>
+  <p class="sub" id="field-sub"></p>
+  <div class="field-list" id="field-list"></div>
+  <button id="btn-sim" class="primary">Play the Major →</button>
+  <button id="btn-abandon" class="ghost wide">Abandon run</button>
+</section>
+
+<!-- ============ SIMULATION ============ -->
+<section id="screen-sim" class="screen">
+  <h2 class="screen-title" id="sim-title">Legends Stage</h2>
+  <p class="sub" id="sim-sub"></p>
+  <div id="sim-body"></div>
+  <button id="btn-skip" class="ghost wide">Skip ⏭</button>
+</section>
+
+<!-- ============ RESULT ============ -->
+<section id="screen-result" class="screen">
+  <div id="result-banner"></div>
+  <div id="result-body"></div>
+  <button id="btn-again" class="primary">New run</button>
+</section>
+
+<!-- ============ ABOUT ============ -->
+<div id="about" class="modal" hidden>
+  <div class="modal-inner">
+    <h2>Where the numbers come from</h2>
+    <h3>Player cards</h3>
+    <p><b>RATING</b> is HLTV career rating, <b>DUELS</b> is K/D ratio, <b>MILEAGE</b> is rounds
+      played, and <b>LEVEL</b> is how strong the teams were that the player actually played for.
+      Each is shown as a percentile against the other 624 players in the pool.</p>
+    <p>OVR blends the four. A career rating alone is misleading — a 1.17 in a tier-2 league is
+      not a 1.17 against Astralis — so LEVEL carries real weight.</p>
+    <h3>Roles and weapons</h3>
+    <p>Roles are Liquipedia's documented ones. Weapon fit is a design rule on top of them: an
+      AWP in an AWPer's hands is the team's whole plan, and the same rifle handed to an entry
+      fragger instead of a lurker is worth a little less. Nobody's kill counts are invented.</p>
+    <h3>Team strength</h3>
+    <p>Every team is rated by an Elo over 68,932 real matches, where the unit is the
+      <b>round</b>, not the win — in Counter-Strike the scoreline is the dominance signal.
+      A 13-0 moves a rating far more than a 13-11, and beating a strong team counts for more
+      than beating a weak one. Series that only recorded map counts are calibrated onto the
+      same scale, where a 2-0 reads as roughly a 13-5.</p>
+    <h3>The bit that isn't real</h3>
+    <p>The tournament itself. Your drafted team never existed, so its run is simulated: each
+      round is a coin weighted by the rating gap between the two teams. Real teams keep their
+      real strength, but no real result is being reported.</p>
+    <button class="ghost" id="btn-about-close">Close</button>
+  </div>
+</div>
+
+<script src="js/main.js?v=5"></script>
+<script>
+// Service worker + the KB's self-heal: if the app never boots (an old SW serving a
+// mix of old and new files), clear everything once and reload rather than leaving
+// someone stuck on "Loading rosters…".
+(function () {
+  if ('serviceWorker' in navigator) {
+    window.addEventListener('load', function () {
+      navigator.serviceWorker.register('sw.js').catch(function () {});
+    });
+    var reloading = false;
+    navigator.serviceWorker.addEventListener('controllerchange', function () {
+      if (reloading) return;
+      reloading = true;
+      location.reload();
+    });
+  }
+  setTimeout(function () {
+    if (window.__game || sessionStorage.getItem('healed')) return;
+    sessionStorage.setItem('healed', '1');
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.getRegistrations().then(function (rs) {
+        rs.forEach(function (r) { r.unregister(); });
+      });
+    }
+    if (window.caches) caches.keys().then(function (ks) { ks.forEach(function (k) { caches.delete(k); }); });
+    setTimeout(function () { location.reload(); }, 300);
+  }, 6000);
+})();
+</script>
+<!-- hub-stats visit counter -->
+<script>(function(){try{var A="13-0",K="hubdev",d=localStorage.getItem(K);if(!d){d=(self.crypto&&crypto.randomUUID?crypto.randomUUID():Date.now()+"."+Math.random().toString(36).slice(2));localStorage.setItem(K,d);}var u="https://hub-stats.mathiasjob.workers.dev/hit",b=JSON.stringify({app:A,d:d});if(navigator.sendBeacon){navigator.sendBeacon(u,b);}else{fetch(u,{method:"POST",body:b,keepalive:true,mode:"no-cors"});}}catch(e){}})();</script>
+</body>
+</html>

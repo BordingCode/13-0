@@ -1,0 +1,5 @@
+# Raw source data, re-downloadable and far too big for the repo.
+# See tools/README.md for where each one comes from.
+tools/matches_raw.json
+tools/cache_liquipedia.json
+.playwright-mcp/
