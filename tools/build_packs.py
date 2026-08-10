@@ -22,6 +22,32 @@ MIN_ROSTER = 5
 MIN_TEAM_OVR = 56
 FIELD_SIZE = 16
 
+# The tournaments you actually play. Named one by one rather than guessed at,
+# because "major" in an event name also matches "PGL Major Krakow 2017 Main
+# Qualifier" — and a qualifier is not the thing the game is named after. Every
+# one of these is a real CS:GO Major with a real 16-team field; ESL One Cologne
+# 2014 and IEM Rio 2022 are the two missing, the first short a team in the match
+# feed and the second past where the data ends.
+MAJORS = {
+    "DreamHack Winter 2013",
+    "EMS One Katowice 2014",
+    "DreamHack Winter 2014",
+    "ESL One Katowice 2015",
+    "ESL One Cologne 2015",
+    "DreamHack Open Cluj-Napoca 2015",
+    "MLG Columbus 2016",
+    "ESL One Cologne 2016",
+    "ELEAGUE Major 2017",
+    "PGL Major Krakow 2017",
+    "ELEAGUE Major 2018",
+    "FACEIT Major 2018",
+    "IEM Katowice 2019",
+    "StarLadder Major Berlin 2019",
+    "IEM Katowice 2020",
+    "PGL Major Stockholm 2021",
+    "PGL Major Antwerp 2022",
+}
+
 # Team names differ between HLTV's match feed and Liquipedia's team histories.
 ALIASES = {
     "Natus Vincere": {"Natus Vincere", "Na'Vi", "NaVi"},
@@ -103,9 +129,16 @@ def main():
     fields = []
     for ev in events:
         ym = ev["ym"]
-        field = [t for t in ev["teams"] if t["ovr"] >= 55][:FIELD_SIZE]
-        if len(field) >= 8:
-            fields.append({"name": ev["name"], "year": ev["year"], "teams": field})
+        # The field is the event's real attendance, weak teams included. An
+        # earlier cut at ovr>=55 quietly deleted the bottom of a Major — Bravado
+        # and myXMG were at DreamHack Winter 2014 — which left the Legends Stage
+        # with an odd number of teams and no way to resolve it.
+        if ev["name"] in MAJORS and len(ev["teams"]) >= FIELD_SIZE:
+            fields.append({
+                "name": ev["name"],
+                "year": ev["year"],
+                "teams": ev["teams"][:FIELD_SIZE],
+            })
 
         for t in ev["teams"]:
             if t["ovr"] < MIN_TEAM_OVR:
@@ -131,17 +164,12 @@ def main():
             seen[key] = p
     packs = sorted(seen.values(), key=lambda p: (p["year"], p["team"]))
 
-    # Fields: one per year. An actual Major always wins — that is the run the
-    # game is named after — otherwise take the strongest field of that year.
-    best_field = {}
+    # One entry per Major, strongest attendance kept if a name somehow repeats.
+    seen_field = {}
     for f in fields:
-        strength = sum(t["ovr"] for t in f["teams"][:8])
-        if "major" in f["name"].lower():
-            strength += 1000
-        if f["year"] not in best_field or strength > best_field[f["year"]]["_s"]:
-            best_field[f["year"]] = {**f, "_s": strength}
-    fields = [{k: v for k, v in f.items() if k != "_s"}
-              for f in sorted(best_field.values(), key=lambda f: f["year"])]
+        if f["name"] not in seen_field:
+            seen_field[f["name"]] = f
+    fields = sorted(seen_field.values(), key=lambda f: (f["year"], f["name"]))
 
     (DATA / "packs.json").write_text(json.dumps(packs, separators=(",", ":"), ensure_ascii=False))
     (DATA / "fields.json").write_text(json.dumps(fields, separators=(",", ":"), ensure_ascii=False))

@@ -28,6 +28,32 @@
   var setup = { era: 'all', diff: 'pro', alloc: 'auto' };
   var run = null;
 
+  // ---------------------------------------------------------------- storage
+  // Three keys, all versioned: what you chose last, the run you are in the
+  // middle of, and the career that outlives every run.
+  var LS = { setup: 't13_setup_v1', run: 't13_run_v1', career: 't13_career_v1' };
+
+  function readJSON(key, fallback) {
+    try {
+      var s = localStorage.getItem(key);
+      if (!s) return fallback;
+      var o = JSON.parse(s);
+      return (o && typeof o === 'object') ? o : fallback;
+    } catch (e) { return fallback; }
+  }
+  function writeJSON(key, val) {
+    try { localStorage.setItem(key, JSON.stringify(val)); } catch (e) { /* private mode, full disk */ }
+  }
+  function dropKey(key) {
+    try { localStorage.removeItem(key); } catch (e) { }
+  }
+
+  function blankCareer() {
+    return { v: 1, runs: 0, champ: 0, flawless: 0, advanced: 0, top4: 0,
+             mapsLost: 0, perfect: 0, best: null, history: [] };
+  }
+  var career = blankCareer();
+
   // ---------------------------------------------------------------- helpers
   function $(id) { return document.getElementById(id); }
 
@@ -191,6 +217,8 @@
     buildOptions('opt-era', ERAS, 'era');
     buildOptions('opt-diff', DIFFS, 'diff');
     buildOptions('opt-alloc', ALLOCS, 'alloc');
+    $('btn-resume').hidden = !savedRun();
+    renderCareer();
     screen('setup');
   }
 
@@ -215,6 +243,7 @@
       used: {},
       era: era
     };
+    writeJSON(LS.setup, setup);
     nextPack();
     screen('draft');
   }
@@ -245,6 +274,78 @@
     run.pack = drawPack();
     run.packWeapons = shuffled(DATA.weapons).slice(0, 5);
     renderDraft();
+  }
+
+  // ---------------------------------------------------------------- resume
+  // Only names go to disk; everything else is re-hydrated from data/ on load,
+  // so a rebuilt dataset can never resurrect a player who no longer exists.
+  function packKey(p) { return p ? p.team + '|' + p.year + '|' + p.event : null; }
+
+  function saveRun(phase) {
+    if (!run) return;
+    writeJSON(LS.run, {
+      v: 1,
+      phase: phase,
+      setup: { era: setup.era, diff: setup.diff, alloc: setup.alloc },
+      squad: run.squad.map(function (s) {
+        return s ? { n: s.p.n, slot: s.slot, year: s.year, team: s.team, event: s.event } : null;
+      }),
+      weapons: run.weapons.map(function (w) { return w.n; }),
+      picks: run.picks,
+      rerolls: run.rerolls,
+      used: run.used,
+      pack: packKey(run.pack),
+      packWeapons: (run.packWeapons || []).map(function (w) { return w.n; }),
+      field: run.field ? run.field.name : null,
+      teams: run.teams || null
+    });
+  }
+
+  function savedRun() {
+    var s = readJSON(LS.run, null);
+    return (s && s.v === 1 && s.squad && s.squad.length === 5) ? s : null;
+  }
+
+  function weaponByName(n) {
+    return DATA.weapons.filter(function (w) { return w.n === n; })[0] || null;
+  }
+
+  function resumeRun() {
+    var s = savedRun();
+    if (!s) { initSetup(); return; }
+
+    setup.era = s.setup.era; setup.diff = s.setup.diff; setup.alloc = s.setup.alloc;
+    var era = eraDef();
+    var pool = DATA.packs.filter(function (p) { return p.year >= era.from && p.year <= era.to; });
+
+    run = {
+      squad: s.squad.map(function (x) {
+        if (!x) return null;
+        var p = byName[x.n];
+        return p ? { p: p, slot: x.slot, year: x.year, team: x.team, event: x.event } : null;
+      }),
+      weapons: s.weapons.map(weaponByName).filter(Boolean),
+      picks: s.picks || 0,
+      alloc: setup.alloc,
+      rerolls: s.rerolls || 0,
+      pool: pool,
+      used: s.used || {},
+      era: era
+    };
+
+    if (s.phase === 'field' && s.teams && s.teams.length) {
+      run.field = DATA.fields.filter(function (f) { return f.name === s.field; })[0] || DATA.fields[0];
+      run.teams = s.teams;
+      run.eval = evaluate(run);
+      renderField();
+      return;
+    }
+
+    run.pack = pool.filter(function (p) { return packKey(p) === s.pack; })[0] || drawPack();
+    run.packWeapons = (s.packWeapons || []).map(weaponByName).filter(Boolean);
+    if (run.packWeapons.length < 5) run.packWeapons = shuffled(DATA.weapons).slice(0, 5);
+    renderDraft();
+    screen('draft');
   }
 
   function slotForPlayer(p) {
@@ -306,7 +407,19 @@
     b.title = p.n + ' — HLTV rating ' + p.hltv + ', K/D ' + p.kd +
       ', ' + p.rounds.toLocaleString() + ' rounds, best team ' + p.best;
     b.addEventListener('click', function () { if (!b.disabled) takePlayer(p); });
-    return b;
+
+    // The card itself is a button, so the info affordance has to sit beside it
+    // rather than inside it — nested buttons are invalid and iOS ignores them.
+    var wrap = el('div', 'card-wrap');
+    wrap.appendChild(b);
+    // A drawn circle rather than the ⓘ character — that glyph is missing from
+    // enough fonts to show up as a hollow box on someone's phone.
+    var info = el('button', 'info');
+    info.appendChild(el('span', 'info-dot', 'i'));
+    info.setAttribute('aria-label', 'What the numbers mean for ' + p.n);
+    info.addEventListener('click', function (e) { e.stopPropagation(); openSheet(p); });
+    wrap.appendChild(info);
+    return wrap;
   }
 
   function haveWeapon(w) {
@@ -423,12 +536,13 @@
 
     $('draft-hint').textContent = 'One card per pack. Fill all five roles and pick five guns. ' +
       'Players who played together bring chemistry; a gun in the wrong hands costs you.';
+
+    saveRun('draft');
   }
 
   // ---------------------------------------------------------------- field
   function showField() {
-    var ev = evaluate(run);
-    run.eval = ev;
+    run.eval = evaluate(run);
 
     // Pick a real tournament field from the chosen era.
     var fields = DATA.fields.filter(function (f) {
@@ -441,9 +555,14 @@
       return { name: t.n, ovr: t.ovr, you: false };
     });
     run.field = field;
-    run.teams = rivals.concat([{ name: 'Your Team', ovr: ev.ovr, you: true }]);
+    run.teams = rivals.concat([{ name: 'Your Team', ovr: run.eval.ovr, you: true }]);
     run.teams.sort(function (a, b) { return b.ovr - a.ovr; });
 
+    renderField();
+  }
+
+  function renderField() {
+    var field = run.field;
     $('field-title').textContent = field.name;
     var rank = run.teams.findIndex(function (t) { return t.you; }) + 1;
     $('field-sub').textContent = field.year + ' · 16 teams · you are seeded ' + rank +
@@ -459,7 +578,22 @@
       host.appendChild(r);
     });
 
+    $('projection-band').textContent = '…';
+    $('projection-odds').textContent = 'Running 400 Majors to see where this roster lands…';
     screen('field');
+    saveRun('field');
+
+    // After the screen has painted, so the two hundred simulations never show
+    // up as a frozen tap.
+    var teams = run.teams;
+    laterStep(function () {
+      if (run.teams !== teams) return;   // player already moved on
+      var p = projectFinish(teams, 400);
+      run.projection = p;
+      $('projection-band').textContent = p.label;
+      $('projection-odds').textContent = 'Champion in ' + p.champ + ' of ' + p.runs +
+        ' · a 13-0 run in ' + p.flawless;
+    }, 60);
   }
 
   // ---------------------------------------------------------------- simulation
@@ -544,7 +678,15 @@
     }
 
     st.sort(function (a, b) { return (b.w - a.w) || (a.l - b.l) || (a.seed - b.seed); });
-    return { rounds: rounds, standings: st, advanced: st.filter(function (s) { return s.w >= 3; }).slice(0, 8) };
+
+    // Sixteen teams always resolve to exactly eight at three wins. The top-up
+    // is a seatbelt for a field that somehow isn't sixteen, so the bracket is
+    // never handed a short list.
+    var adv = st.filter(function (s) { return s.w >= 3; });
+    if (adv.length < 8) {
+      adv = adv.concat(st.filter(function (s) { return s.w < 3 && s.l < 3; })).slice(0, 8);
+    }
+    return { rounds: rounds, standings: st, advanced: adv.slice(0, 8) };
   }
 
   function playoffs(seeds) {
@@ -554,9 +696,14 @@
     var n = 0;
     while (alive.length > 1) {
       var matches = [], next = [];
-      for (var i = 0; i < alive.length / 2; i++) {
-        var a = alive[i], b = alive[alive.length - 1 - i];
-        var res = playSeries(a, b, 3);
+      // An odd bracket gives the top seed a bye rather than losing a team:
+      // pairing outside-in on an odd list used to walk straight past the
+      // middle entry and drop it out of the tournament.
+      var byes = alive.length % 2;
+      var field = alive.slice(byes);
+      for (var b = 0; b < byes; b++) next.push(alive[b]);
+      for (var i = 0; i < field.length / 2; i++) {
+        var res = playSeries(field[i], field[field.length - 1 - i], 3);
         matches.push({ res: res, bestOf: 3 });
         next.push(res.winner);
       }
@@ -567,8 +714,59 @@
     return { stages: stages, champion: alive[0] };
   }
 
-  function runTournament() {
-    var swiss = swissStage(run.teams);
+  // Where every team actually finished. The bracket only knows winners, so a
+  // placement is read backwards from the round a team went out in: the last
+  // four share 3rd–4th, the quarter-final losers share 5th–8th, and everyone
+  // who missed the bracket is banded by their Legends Stage record, the way a
+  // real Major reports 9–11th rather than pretending 10th means something.
+  function placements(swiss, po, advancedTeams) {
+    var map = new Map();
+    function band(teams, lo, hi) {
+      var label = lo === hi ? ord(lo) : ord(lo) + '–' + ord(hi);
+      teams.forEach(function (t) { if (t) map.set(t, { lo: lo, hi: hi, label: label }); });
+    }
+
+    // Bracket, from the final backwards.
+    var n = po.stages.length;
+    if (n) {
+      var final = po.stages[n - 1].matches[0];
+      band([final.res.winner], 1, 1);
+      band([final.res.loser], 2, 2);
+      var lo = 3;
+      for (var s = n - 2; s >= 0; s--) {
+        var losers = po.stages[s].matches.map(function (m) { return m.res.loser; });
+        band(losers, lo, lo + losers.length - 1);
+        lo += losers.length;
+      }
+    } else if (advancedTeams.length === 1) {
+      band([advancedTeams[0]], 1, 1);
+    }
+
+    // Everyone who never reached the bracket, grouped by record.
+    var missed = swiss.standings.filter(function (st) { return !map.has(st.team); });
+    var rank = 1 + advancedTeams.length;
+    var i = 0;
+    while (i < missed.length) {
+      var j = i;
+      while (j < missed.length && missed[j].w === missed[i].w && missed[j].l === missed[i].l) j++;
+      var group = missed.slice(i, j).map(function (st) { return st.team; });
+      band(group, rank, rank + group.length - 1);
+      rank += group.length;
+      i = j;
+    }
+    return map;
+  }
+
+  function ord(n) {
+    var s = ['th', 'st', 'nd', 'rd'], v = n % 100;
+    return n + (s[(v - 20) % 10] || s[v] || s[0]);
+  }
+
+  // A whole Major, start to finish, for any field of teams. Pure: it reads no
+  // globals, so the projection can run it two hundred times without touching
+  // the run the player is actually in.
+  function simulateTournament(teams) {
+    var swiss = swissStage(teams);
     var seeds = swiss.advanced.map(function (s) { return s.team; });
     var po = seeds.length >= 2 ? playoffs(seeds) : { stages: [], champion: seeds[0] };
 
@@ -590,10 +788,15 @@
 
     you = swiss.standings.filter(function (s) { return s.team.you; })[0];
     var champion = po.champion || null;
+    var places = placements(swiss, po, seeds);
+    var yourTeam = teams.filter(function (t) { return t.you; })[0];
+    var place = places.get(yourTeam) || { lo: teams.length, hi: teams.length, label: ord(teams.length) };
 
-    run.result = {
+    return {
       swiss: swiss,
       po: po,
+      places: places,
+      place: place,
       champion: champion,
       youAdvanced: !!(you && you.w >= 3),
       youRecord: you ? you.w + '-' + you.l : '',
@@ -603,6 +806,40 @@
       played: played,
       champ: champion && champion.you === true,
       flawless: champion && champion.you === true && mapsLost === 0
+    };
+  }
+
+  function runTournament() {
+    run.result = simulateTournament(run.teams);
+  }
+
+  // Two hundred Majors with this exact field, so the draft has a readable
+  // verdict before a single round is played. The band is the middle half of
+  // those outcomes — not the best case, and not a promise.
+  function projectFinish(teams, n) {
+    var los = [], his = [], champ = 0, flawless = 0;
+    for (var i = 0; i < n; i++) {
+      var fieldCopy = teams.map(function (t) { return { name: t.name, ovr: t.ovr, you: t.you }; });
+      var r = simulateTournament(fieldCopy);
+      // A placement is itself a band (quarter-final losers all share 5th–8th),
+      // so the projection has to widen to the edges of the outcomes it saw —
+      // reporting a bare "5th" would promise a precision the bracket never has.
+      los.push(r.place.lo);
+      his.push(r.place.hi);
+      if (r.champ) champ++;
+      if (r.flawless) flawless++;
+    }
+    los.sort(function (a, b) { return a - b; });
+    his.sort(function (a, b) { return a - b; });
+    var lo = los[Math.floor(n * 0.25)];
+    var hi = Math.max(lo, his[Math.floor(n * 0.75)]);
+    // Counts, not percentages: "champion in 0 of 400" is honest where a
+    // rounded "0%" reads like the game refusing to answer.
+    return {
+      label: lo === hi ? ord(lo) : ord(lo) + '–' + ord(hi),
+      runs: n,
+      champ: champ,
+      flawless: flawless
     };
   }
 
@@ -675,6 +912,7 @@
   // ---------------------------------------------------------------- result
   function showResult() {
     clearSim();
+    dropKey(LS.run);                     // the run is over; nothing left to resume
     var res = run.result;
     var banner = $('result-banner');
     banner.innerHTML = '';
@@ -695,7 +933,11 @@
       sub = 'Out of the Legends Stage at ' + res.youRecord + '. No bracket, no story.';
     }
     banner.appendChild(verdict);
+    banner.appendChild(el('div', 'verdict-place', 'Finished ' + res.place.label + ' of 16'));
     banner.appendChild(el('div', 'verdict-sub', sub));
+
+    recordCareer();
+    drawShareCard();
 
     var body = $('result-body');
     body.innerHTML = '';
@@ -746,6 +988,8 @@
     facts.appendChild(el('h3', null, 'The run'));
     [
       ['Team OVR', String(run.eval.ovr)],
+      ['Finished', res.place.label],
+      ['Projected', run.projection ? run.projection.label : '—'],
       ['Legends Stage', res.youRecord],
       ['Maps dropped', String(res.mapsLost)],
       ['13-0 maps you won', String(res.perfectMaps)],
@@ -778,13 +1022,294 @@
     screen('result');
   }
 
+  // ---------------------------------------------------------------- career
+  function recordCareer() {
+    var res = run.result;
+    career.runs++;
+    if (res.champ) career.champ++;
+    if (res.flawless) career.flawless++;
+    if (res.youAdvanced) career.advanced++;
+    if (res.place.hi <= 4) career.top4++;
+    career.mapsLost += res.mapsLost;
+    career.perfect += res.perfectMaps;
+    if (career.best == null || res.place.lo < career.best) career.best = res.place.lo;
+
+    career.history.unshift({
+      at: Date.now(),
+      place: res.place.label,
+      lo: res.place.lo,
+      ovr: run.eval.ovr,
+      era: setup.era,
+      diff: setup.diff,
+      field: run.field.name,
+      record: res.youRecord,
+      mapsLost: res.mapsLost,
+      champ: !!res.champ,
+      flawless: !!res.flawless,
+      five: run.squad.filter(Boolean).map(function (s) {
+        return { n: s.p.n, f: s.p.f, slot: s.slot, ovr: s.p.ovr };
+      })
+    });
+    career.history = career.history.slice(0, 8);
+    writeJSON(LS.career, career);
+  }
+
+  function renderCareer() {
+    var panel = $('career-panel');
+    if (!career.runs) { panel.hidden = true; return; }
+    panel.hidden = false;
+    $('career-runs').textContent = career.runs + (career.runs === 1 ? ' run' : ' runs');
+
+    var grid = $('career-grid');
+    grid.innerHTML = '';
+    [
+      ['13-0', career.flawless, 'flawless'],
+      ['Majors won', career.champ, career.champ ? 'won' : ''],
+      ['Top 4', career.top4, ''],
+      ['Legends made', career.advanced, ''],
+      ['Best finish', career.best ? ord(career.best) : '—', ''],
+      ['13-0 maps', career.perfect, '']
+    ].forEach(function (kv) {
+      var c = el('div', 'stat' + (kv[2] ? ' ' + kv[2] : ''));
+      c.appendChild(el('b', null, String(kv[1])));
+      c.appendChild(el('span', null, kv[0]));
+      grid.appendChild(c);
+    });
+
+    var list = $('career-list');
+    list.innerHTML = '';
+    career.history.forEach(function (h) {
+      var r = el('div', 'past' + (h.flawless ? ' flawless' : h.champ ? ' won' : ''));
+      var left = el('div', 'past-place');
+      left.appendChild(el('b', null, h.flawless ? '13-0' : h.place));
+      left.appendChild(el('span', null, 'OVR ' + h.ovr));
+      r.appendChild(left);
+
+      var mid = el('div', 'past-five');
+      mid.appendChild(el('div', 'past-names', h.five.map(function (p) { return p.n; }).join(' · ')));
+      mid.appendChild(el('div', 'past-meta', h.field + ' · ' + labelOf(ERAS, h.era) + ' · ' + labelOf(DIFFS, h.diff)));
+      r.appendChild(mid);
+      list.appendChild(r);
+    });
+  }
+
+  function labelOf(list, id) {
+    for (var i = 0; i < list.length; i++) if (list[i].id === id) return list[i].label;
+    return id;
+  }
+
+  function hasId(list, id) {
+    return list.some(function (o) { return o.id === id; });
+  }
+
+  // ---------------------------------------------------------------- share card
+  //
+  // Drawn on a canvas rather than screenshotted, so what leaves the phone is a
+  // clean 1080×1350 card instead of whatever the browser chrome looked like.
+  function drawShareCard() {
+    var cv = $('share-canvas');
+    var g = cv.getContext('2d');
+    var W = cv.width, H = cv.height;
+    var res = run.result, ev = run.eval;
+    var mono = '"SF Mono", ui-monospace, "Roboto Mono", Menlo, Consolas, monospace';
+
+    g.fillStyle = '#0d1117'; g.fillRect(0, 0, W, H);
+    g.fillStyle = '#151b24'; g.fillRect(48, 48, W - 96, H - 96);
+    g.strokeStyle = '#2c3846'; g.lineWidth = 2; g.strokeRect(48, 48, W - 96, H - 96);
+
+    // header
+    g.font = '800 62px ' + mono;
+    g.fillStyle = '#e8eef6'; g.textAlign = 'left';
+    g.fillText('13', 92, 150);
+    var w13 = g.measureText('13').width;
+    g.fillStyle = '#f0a020'; g.fillText('-0', 92 + w13, 150);
+    g.font = '400 26px ' + mono;
+    g.fillStyle = '#8d9bad'; g.textAlign = 'right';
+    g.fillText(run.field.name, W - 92, 150);
+
+    // verdict
+    g.textAlign = 'center';
+    g.font = '800 84px ' + mono;
+    g.fillStyle = res.flawless ? '#f0a020' : res.champ ? '#4ec97a' : '#e8eef6';
+    g.fillText(res.flawless ? '13-0' : res.champ ? 'CHAMPIONS' : 'Finished ' + res.place.label, W / 2, 285);
+    g.font = '400 30px ' + mono;
+    g.fillStyle = '#8d9bad';
+    g.fillText(res.flawless
+      ? 'A Major won without dropping a map'
+      : res.champ
+        ? 'Major won · ' + res.mapsLost + ' map' + (res.mapsLost === 1 ? '' : 's') + ' dropped'
+        : 'Legends Stage ' + res.youRecord + ' · ' + res.mapsLost + ' maps dropped',
+      W / 2, 335);
+
+    // the five
+    var order = ev.alloc, y = 430;
+    var pending = [];
+    run.squad.forEach(function (s, i) {
+      if (!s) return;
+      var w = (order && order[i] != null) ? run.weapons[order[i]] : run.weapons[i];
+      g.fillStyle = i % 2 ? '#1a222d' : '#1d2632';
+      g.fillRect(92, y - 46, W - 184, 108);
+
+      g.textAlign = 'left';
+      g.font = '700 22px ' + mono;
+      g.fillStyle = '#f0a020';
+      g.fillText(SLOT_LABEL[s.slot].toUpperCase(), 120, y - 8);
+
+      g.font = '700 40px ' + mono;
+      g.fillStyle = '#e8eef6';
+      g.fillText(s.p.f + ' ' + s.p.n, 120, y + 34);
+
+      // Three right-hand columns that never overlap: where they played, what
+      // they are worth, and what they are holding.
+      g.font = '400 22px ' + mono;
+      g.fillStyle = '#5d6b7d';
+      g.textAlign = 'right';
+      g.fillText(s.team + ' ' + s.year, 700, y + 34);
+
+      g.font = '800 44px ' + mono;
+      g.fillStyle = '#f0a020';
+      g.fillText(String(s.p.ovr), 812, y + 22);
+
+      if (w) pending.push({ w: w, x: 900, y: y - 24 });
+      y += 118;
+    });
+
+    // footer numbers
+    var fy = H - 190;
+    g.fillStyle = '#1a222d'; g.fillRect(92, fy - 60, W - 184, 108);
+    var cells = [
+      [Math.round(ev.base), 'BASE', '#6ea8dc'],
+      [(ev.fit >= 0 ? '+' : '') + ev.fit.toFixed(1), 'WEAPONS', '#4ec97a'],
+      [(ev.chem >= 0 ? '+' : '') + ev.chem.toFixed(1), 'CHEMISTRY', '#d9a441'],
+      [ev.ovr, 'OVERALL', '#f0a020']
+    ];
+    g.textAlign = 'center';
+    cells.forEach(function (c, i) {
+      var cx = 92 + (W - 184) * (i + 0.5) / cells.length;
+      g.font = '800 52px ' + mono;
+      g.fillStyle = c[2];
+      g.fillText(String(c[0]), cx, fy);
+      g.font = '400 20px ' + mono;
+      g.fillStyle = '#5d6b7d';
+      g.fillText(c[1], cx, fy + 34);
+    });
+
+    g.font = '400 24px ' + mono;
+    g.fillStyle = '#5d6b7d';
+    g.fillText('bordingcode.github.io/13-0 · real rosters, real ratings', W / 2, H - 92);
+
+    // Weapon renders load asynchronously; each paints itself when it arrives.
+    pending.forEach(function (item) {
+      var img = new Image();
+      img.onload = function () {
+        var iw = 168, ih = 66;
+        var scale = Math.min(iw / img.width, ih / img.height);
+        var dw = img.width * scale, dh = img.height * scale;
+        g.drawImage(img, item.x - dw / 2, item.y + (ih - dh) / 2, dw, dh);
+      };
+      img.src = 'img/weapons/' + item.w.img + '.png';
+    });
+  }
+
+  function shareCard() {
+    var cv = $('share-canvas');
+    var name = '13-0-' + (run.result.flawless ? 'flawless' : run.result.place.lo + 'th') + '.png';
+    if (!cv.toBlob) return;
+    cv.toBlob(function (blob) {
+      if (!blob) return;
+      var file = null;
+      try { file = new File([blob], name, { type: 'image/png' }); } catch (e) { }
+      if (file && navigator.canShare && navigator.canShare({ files: [file] })) {
+        navigator.share({ files: [file], title: '13-0' }).catch(function () { });
+        return;
+      }
+      var url = URL.createObjectURL(blob);
+      var a = document.createElement('a');
+      a.href = url;
+      a.download = name;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      setTimeout(function () { URL.revokeObjectURL(url); }, 4000);
+    }, 'image/png');
+  }
+
+  // ---------------------------------------------------------------- player sheet
+  // A phone has no hover, so everything that used to hide in a `title` tooltip
+  // lives here instead — reachable, and without spending your pick to read it.
+  var sheetPlayer = null;
+
+  function openSheet(p) {
+    sheetPlayer = p;
+    var body = $('sheet-body');
+    body.innerHTML = '';
+
+    var head = el('h2');
+    head.appendChild(el('span', 'flag', p.f + ' '));
+    head.appendChild(document.createTextNode(p.n));
+    body.appendChild(head);
+
+    body.appendChild(el('p', 'sheet-roles', 'Roles: ' +
+      p.s.map(function (s) { return SLOT_LABEL[s] || s; }).join(', ')));
+
+    var rows = [
+      ['OVR', p.ovr, 'The blend of everything below, on a 0–100 scale against the whole pool.'],
+      ['HLTV rating', p.hltv, 'Career rating across every match in the dataset.'],
+      ['K/D', p.kd, 'Kills divided by deaths — the duel record.'],
+      ['Rounds played', p.rounds.toLocaleString(), 'Mileage. A big number means the rating is trustworthy.'],
+      ['Level', p.lvl, 'How strong the teams were that they actually played for (percentile).'],
+      ['Best team', p.best, 'The strongest side on their record.']
+    ];
+    var tbl = el('div', 'sheet-rows');
+    rows.forEach(function (r) {
+      var d = el('div', 'sheet-row');
+      d.appendChild(el('span', 'k', r[0]));
+      d.appendChild(el('span', 'v', String(r[1])));
+      d.appendChild(el('span', 'why', r[2]));
+      tbl.appendChild(d);
+    });
+    body.appendChild(tbl);
+
+    var slot = slotForPlayer(p);
+    var btn = $('btn-sheet-pick');
+    btn.textContent = slot >= 0 ? 'Pick ' + p.n + ' as ' + SLOT_LABEL[SLOTS[slot]] : 'No open slot for this player';
+    btn.disabled = slot < 0;
+    $('player-sheet').hidden = false;
+  }
+
+  function closeSheet() {
+    $('player-sheet').hidden = true;
+    sheetPlayer = null;
+  }
+
   // ---------------------------------------------------------------- wiring
   function wire() {
     $('btn-start').addEventListener('click', startRun);
     $('btn-sim').addEventListener('click', showSim);
     $('btn-skip').addEventListener('click', skipSim);
-    $('btn-again').addEventListener('click', initSetup);
-    $('btn-abandon').addEventListener('click', initSetup);
+    $('btn-again').addEventListener('click', startRun);
+    $('btn-change').addEventListener('click', initSetup);
+    $('btn-resume').addEventListener('click', resumeRun);
+    $('btn-share').addEventListener('click', shareCard);
+    $('btn-sheet-close').addEventListener('click', closeSheet);
+    $('btn-sheet-pick').addEventListener('click', function () {
+      var p = sheetPlayer;
+      closeSheet();
+      if (p) takePlayer(p);
+    });
+    $('player-sheet').addEventListener('click', function (e) {
+      if (e.target === $('player-sheet')) closeSheet();
+    });
+    $('btn-abandon').addEventListener('click', function () {
+      dropKey(LS.run);
+      initSetup();
+    });
+    $('btn-wipe').addEventListener('click', function () {
+      if (!window.confirm('Delete every recorded run? This cannot be undone.')) return;
+      career = blankCareer();
+      dropKey(LS.career);
+      renderCareer();
+    });
     $('btn-reroll').addEventListener('click', function () {
       if (run.rerolls <= 0) return;
       run.rerolls--;
@@ -804,6 +1329,16 @@
     })).then(function (loaded) {
       files.forEach(function (f, i) { DATA[f] = loaded[i]; });
       DATA.players.forEach(function (p) { byName[p.n] = p; });
+
+      career = readJSON(LS.career, null) || blankCareer();
+      if (career.v !== 1 || !Array.isArray(career.history)) career = blankCareer();
+      var lastSetup = readJSON(LS.setup, null);
+      if (lastSetup) {
+        if (hasId(ERAS, lastSetup.era)) setup.era = lastSetup.era;
+        if (hasId(DIFFS, lastSetup.diff)) setup.diff = lastSetup.diff;
+        if (hasId(ALLOCS, lastSetup.alloc)) setup.alloc = lastSetup.alloc;
+      }
+
       $('boot').style.display = 'none';
       wire();
       initSetup();
@@ -812,6 +1347,8 @@
         get run() { return run; },
         evaluate: evaluate,
         playMap: playMap,
+        simulateTournament: simulateTournament,
+        projectFinish: projectFinish,
         // Balance probe: how does a team of a given OVR actually fare over n Majors?
         testRun: function (ovr, n, fieldName) {
           var out = { runs: n, champ: 0, flawless: 0, advanced: 0, mapsLost: 0, perfect: 0 };

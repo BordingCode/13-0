@@ -13,7 +13,7 @@
 <link rel="manifest" href="manifest.json">
 <link rel="apple-touch-icon" href="img/icon-180.png">
 <link rel="icon" href="img/icon-180.png">
-<link rel="stylesheet" href="css/main.css?v=5">
+<link rel="stylesheet" href="css/main.css?v=6">
 </head>
 <body>
 
@@ -25,6 +25,8 @@
     <h1 class="logo">13<span>-0</span></h1>
     <p class="tagline">Draft an all-time roster. Win a Major without dropping a map.</p>
   </header>
+
+  <button id="btn-resume" class="resume" hidden>↳ Resume your run in progress</button>
 
   <div class="panel">
     <h2>Era</h2>
@@ -42,6 +44,14 @@
   </div>
 
   <button id="btn-start" class="primary">Start Run</button>
+
+  <section class="panel career" id="career-panel" hidden>
+    <h2>Career <span class="career-runs" id="career-runs"></span></h2>
+    <div class="career-grid" id="career-grid"></div>
+    <h3 class="section-label" id="career-recent-label">Recent runs</h3>
+    <div class="career-runs-list" id="career-list"></div>
+    <button class="linkish danger" id="btn-wipe">Wipe career</button>
+  </section>
 
   <p class="fineprint">
     Every player, roster and result here is real. Player ratings come from HLTV career
@@ -70,7 +80,7 @@
       <span id="pack-title">—</span>
       <span class="pack-progress" id="pack-progress"></span>
     </div>
-    <h3 class="section-label">Players</h3>
+    <h3 class="section-label">Players <span class="legend">RAT rating · DUE duels · LVL level of the teams they played for — tap the i on a card for the full player</span></h3>
     <div class="cards" id="pack-players"></div>
     <h3 class="section-label">Weapons</h3>
     <div class="cards weapons" id="pack-weapons"></div>
@@ -83,6 +93,13 @@
 <section id="screen-field" class="screen">
   <h2 class="screen-title" id="field-title">The Field</h2>
   <p class="sub" id="field-sub"></p>
+
+  <div class="projection" id="projection">
+    <div class="projection-label">Projected finish · 16-team field</div>
+    <div class="projection-band" id="projection-band">…</div>
+    <div class="projection-odds" id="projection-odds">Running 400 Majors to see where this roster lands…</div>
+  </div>
+
   <div class="field-list" id="field-list"></div>
   <button id="btn-sim" class="primary">Play the Major →</button>
   <button id="btn-abandon" class="ghost wide">Abandon run</button>
@@ -99,9 +116,25 @@
 <!-- ============ RESULT ============ -->
 <section id="screen-result" class="screen">
   <div id="result-banner"></div>
+
+  <div class="sharecard">
+    <canvas id="share-canvas" width="1080" height="1350" aria-label="Shareable summary of this run"></canvas>
+  </div>
+  <button id="btn-share" class="ghost wide">⬇ Save this run as an image</button>
+
   <div id="result-body"></div>
-  <button id="btn-again" class="primary">New run</button>
+  <button id="btn-again" class="primary">↻ Run it back — same settings</button>
+  <button id="btn-change" class="ghost wide">New run (change settings)</button>
 </section>
+
+<!-- ============ PLAYER DETAIL ============ -->
+<div id="player-sheet" class="modal" hidden>
+  <div class="modal-inner">
+    <div id="sheet-body"></div>
+    <button class="primary" id="btn-sheet-pick">Pick</button>
+    <button class="ghost wide" id="btn-sheet-close">Close</button>
+  </div>
+</div>
 
 <!-- ============ ABOUT ============ -->
 <div id="about" class="modal" hidden>
@@ -123,6 +156,10 @@
       A 13-0 moves a rating far more than a 13-11, and beating a strong team counts for more
       than beating a weak one. Series that only recorded map counts are calibrated onto the
       same scale, where a 2-0 reads as roughly a 13-5.</p>
+    <h3>The projected finish</h3>
+    <p>Before you press play, the game runs this exact 16-team field 400 times and reports the
+      middle half of the outcomes. It is a forecast, not a result — a roster projected 5th–8th
+      wins the whole thing sometimes, and the tournament you actually play is rolled fresh.</p>
     <h3>The bit that isn't real</h3>
     <p>The tournament itself. Your drafted team never existed, so its run is simulated: each
       round is a coin weighted by the rating gap between the two teams. Real teams keep their
@@ -131,7 +168,7 @@
   </div>
 </div>
 
-<script src="js/main.js?v=5"></script>
+<script src="js/main.js?v=6"></script>
 <script>
 // Service worker + the KB's self-heal: if the app never boots (an old SW serving a
 // mix of old and new files), clear everything once and reload rather than leaving

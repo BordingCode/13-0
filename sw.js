@@ -1,13 +1,13 @@
 /* 13-0 service worker.
    Navigations are network-first so a new version reaches returning players on a
    reload; everything else is cache-first with a background refresh. */
-const CACHE = '13-0-v5';
+const CACHE = '13-0-v6';
 
 const ASSETS = [
   './',
   'index.html',
-  'css/main.css?v=5',
-  'js/main.js?v=5',
+  'css/main.css?v=6',
+  'js/main.js?v=6',
   'manifest.json',
   'data/players.json',
   'data/weapons.json',
