@@ -1,7 +1,7 @@
 /* 13-0 service worker.
    Navigations are network-first so a new version reaches returning players on a
    reload; everything else is cache-first with a background refresh. */
-const CACHE = '13-0-v6';
+const CACHE = '13-0-v7';
 
 const ASSETS = [
   './',
